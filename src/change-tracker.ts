@@ -119,15 +119,19 @@ export class ChangeTracker {
         diff: diffResult,
         oldContent,
         newContent,
-        canRevert
+        canRevert,
+        sessionId: change.sessionId,
+        sessionFile: change.sessionFile,
+        isLatestSession: change.isLatestSession,
+        userMessage: change.userMessage
       };
-      
+
       // Add oldString/newString for edit changes
       if (type === 'edit' && change.changes && change.changes.length > 0) {
         result.oldString = change.changes[0].oldString;
         result.newString = change.changes[0].newString;
       }
-      
+
       return result;
     } catch (error) {
       console.error(`Error processing change for ${filePath}:`, error);
