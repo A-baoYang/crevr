@@ -40,6 +40,29 @@ export class RevertServer {
       res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
     });
 
+    // API endpoint to get all sessions metadata
+    this.app.get('/api/sessions', async (req, res) => {
+      try {
+        const sessions = await this.parser.getAllSessionMetadata();
+        res.json(sessions);
+      } catch (error) {
+        console.error('Error getting sessions:', error);
+        res.status(500).json({ error: 'Failed to load sessions' });
+      }
+    });
+
+    // API endpoint to get changes for a specific session
+    this.app.get('/api/session/:sessionId', async (req, res) => {
+      try {
+        const sessionId = req.params.sessionId;
+        const changes = await this.parser.getSessionChanges(sessionId);
+        res.json(changes);
+      } catch (error) {
+        console.error('Error getting session changes:', error);
+        res.status(500).json({ error: 'Failed to load session changes' });
+      }
+    });
+
     // API endpoint to get file content
     this.app.get('/api/file-content', async (req, res) => {
       try {
@@ -101,6 +124,15 @@ export class RevertServer {
           const data = JSON.parse(message.toString());
 
           switch (data.type) {
+            case 'getSessions':
+              await this.handleGetSessions(ws);
+              break;
+            case 'getSessionTurns':
+              await this.handleGetSessionTurns(ws, data.sessionId);
+              break;
+            case 'getSessionChanges':
+              await this.handleGetSessionChanges(ws, data.sessionId);
+              break;
             case 'getChanges':
               await this.handleGetChanges(ws);
               break;
@@ -123,19 +155,107 @@ export class RevertServer {
     });
   }
 
+  private async handleGetSessions(ws: any) {
+    try {
+      console.log('Getting sessions metadata...');
+      const sessions = await this.parser.getAllSessionMetadata();
+      console.log(`Found ${sessions.length} sessions`);
+
+      ws.send(JSON.stringify({
+        type: 'sessions',
+        sessions
+      }));
+    } catch (error: any) {
+      console.error('Error getting sessions:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: error.message || 'Failed to load sessions'
+      }));
+    }
+  }
+
+  private async handleGetSessionTurns(ws: any, sessionId: string) {
+    try {
+      console.log(`Getting turns for session ${sessionId}...`);
+      const sessionWithTurns = await this.parser.getSessionWithTurns(sessionId);
+      console.log(`Found ${sessionWithTurns.turns.length} conversation turns`);
+
+      // Process file changes for each turn
+      for (const turn of sessionWithTurns.turns) {
+        if (turn.fileChanges.length > 0) {
+          const processedChanges = await this.tracker.processChanges(turn.fileChanges);
+          turn.parsedChanges = processedChanges;
+
+          // Add to global changes list for revert tracking
+          this.changes = [...this.changes, ...processedChanges];
+        }
+      }
+
+      // Debug: log the turns being sent
+      console.log(`Sending ${sessionWithTurns.turns.length} turns:`);
+      for (const turn of sessionWithTurns.turns) {
+        console.log(`  Turn ${turn.id}: "${turn.userMessage}" (${turn.fileChanges.length} file changes)`);
+      }
+
+      ws.send(JSON.stringify({
+        type: 'sessionTurns',
+        sessionId,
+        session: sessionWithTurns
+      }));
+    } catch (error: any) {
+      console.error('Error getting session turns:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: error.message || 'Failed to load session turns'
+      }));
+    }
+  }
+
+  private async handleGetSessionChanges(ws: any, sessionId: string) {
+    try {
+      console.log(`Getting changes for session ${sessionId}...`);
+      const fileChanges = await this.parser.getSessionChanges(sessionId);
+      console.log(`Found ${fileChanges.length} file changes`);
+
+      console.log('Processing changes...');
+      const processedChanges = await this.tracker.processChanges(fileChanges);
+      console.log(`Processed ${processedChanges.length} changes`);
+
+      // Add to global changes list
+      this.changes = [...this.changes, ...processedChanges];
+
+      // Sort changes by timestamp (newest first)
+      processedChanges.sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      ws.send(JSON.stringify({
+        type: 'sessionChanges',
+        sessionId,
+        changes: processedChanges
+      }));
+    } catch (error: any) {
+      console.error('Error getting session changes:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: error.message || 'Failed to load session changes'
+      }));
+    }
+  }
+
   private async handleGetChanges(ws: any) {
     try {
       // Get and parse changes from Claude logs
       console.log('Getting file changes...');
       const fileChanges = await this.parser.getFileChanges();
       console.log(`Found ${fileChanges.length} file changes`);
-      
+
       console.log('Processing changes...');
       this.changes = await this.tracker.processChanges(fileChanges);
       console.log(`Processed ${this.changes.length} changes`);
 
       // Sort changes by timestamp (newest first)
-      this.changes.sort((a, b) => 
+      this.changes.sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
 
