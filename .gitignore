@@ -64,3 +64,8 @@ test-file*.txt
 
 # Log files
 *.log
+
+# Development config
+.claude/
+.mcp.json
+docs/
