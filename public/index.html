@@ -186,49 +186,56 @@
     <div x-show="!loading" x-cloak class="h-screen flex flex-col">
         <!-- Header -->
         <header class="bg-slate-800 border-b border-slate-700 px-6 py-4">
-            <h1 class="text-2xl font-semibold">🔄 Crevr</h1>
-            <p class="text-sm text-slate-400 mt-1">Review and revert file changes</p>
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-semibold">🔄 Crevr</h1>
+                    <p class="text-sm text-slate-400 mt-1">Review and revert file changes</p>
+                </div>
+                <button @click="refreshSessions()"
+                        :disabled="refreshing"
+                        class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors">
+                    <span x-show="!refreshing">🔄 Refresh</span>
+                    <span x-show="refreshing">⏳ Refreshing...</span>
+                </button>
+            </div>
         </header>
         
         <!-- Main Content -->
         <div class="flex-1 flex overflow-hidden">
-            <!-- File Tree Sidebar -->
+            <!-- Session List Sidebar -->
             <aside class="w-96 bg-slate-800 border-r border-slate-700 overflow-y-auto">
                 <div class="p-4">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Changed Files</h2>
-                    
-                    <!-- File Tree -->
-                    <div x-show="Object.keys(fileTree).length === 0" class="text-slate-500 text-center py-8">
-                        No changes found
+                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Sessions</h2>
+
+                    <!-- Session List -->
+                    <div x-show="sessions.length === 0" class="text-slate-500 text-center py-8">
+                        No sessions found
                     </div>
-                    
-                    <template x-for="(node, path) in fileTree" :key="path">
-                        <div class="mb-2">
-                            <div @click="toggleFolder(path)" 
-                                 class="cursor-pointer hover:bg-slate-700 rounded px-3 py-2 transition-colors"
-                                 :class="{ 'bg-slate-700': expandedFolders[path] }">
-                                <span :class="expandedFolders[path] ? 'folder-open-icon' : 'folder-icon'" 
-                                      class="text-sm font-medium">
-                                    <span x-text="path"></span>
-                                    <span class="text-slate-500 text-xs ml-2" x-text="`(${Object.keys(node.files).length})`"></span>
+
+                    <template x-for="session in sessions" :key="session.sessionId">
+                        <div @click="selectSession(session.sessionId)"
+                             class="mb-3 cursor-pointer hover:bg-slate-700 rounded-lg p-3 transition-colors"
+                             :class="{ 'bg-blue-900/30 border-l-2 border-blue-500': selectedSessionId === session.sessionId }">
+                            <!-- Session Header -->
+                            <div class="flex items-start justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span x-show="session.isLatest" class="text-lg">📌</span>
+                                    <span x-show="!session.isLatest" class="text-lg">📁</span>
+                                    <span class="text-sm font-medium text-slate-200" x-text="formatSessionTime(session.timestamp)"></span>
+                                </div>
+                                <span x-show="session.isLatest"
+                                      class="text-xs px-2 py-0.5 bg-green-900/50 text-green-400 rounded">
+                                    Latest
                                 </span>
                             </div>
-                            
-                            <!-- Files in folder -->
-                            <div x-show="expandedFolders[path]" class="ml-4 mt-1">
-                                <template x-for="(changes, filename) in node.files" :key="filename">
-                                    <div @click="selectFile(path + '/' + filename)" 
-                                         class="cursor-pointer hover:bg-slate-700 rounded px-3 py-2 mb-1 transition-colors flex items-center justify-between"
-                                         :class="{ 'bg-blue-900/30 border-l-2 border-blue-500': selectedFile === path + '/' + filename, 'opacity-60': !changes[0].fileExists }">
-                                        <div class="flex items-center">
-                                            <span class="file-icon text-sm" x-text="filename"></span>
-                                            <span x-show="!changes[0].fileExists" class="text-xs text-red-400 ml-2">(deleted)</span>
-                                        </div>
-                                        <span class="text-xs px-2 py-1 rounded-full"
-                                              :class="getChangeTypeClass(changes[0].type)"
-                                              x-text="changes[0].type"></span>
-                                    </div>
-                                </template>
+
+                            <!-- User Message -->
+                            <div class="text-sm text-slate-400 mb-2 line-clamp-2" x-text="session.userMessage"></div>
+
+                            <!-- File Count -->
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-slate-500" x-text="session.fileCount + ' files changed'"></span>
+                                <span x-show="loadingSessionId === session.sessionId" class="text-xs text-blue-400">Loading...</span>
                             </div>
                         </div>
                     </template>
@@ -237,54 +244,120 @@
             
             <!-- Content Area -->
             <main class="flex-1 bg-slate-900 overflow-hidden flex flex-col">
-                <!-- File Header -->
-                <div x-show="selectedFile" class="bg-slate-800 border-b border-slate-700 px-6 py-4">
+                <!-- Session Header -->
+                <div x-show="selectedSessionId" class="bg-slate-800 border-b border-slate-700 px-6 py-4">
                     <div class="flex items-center justify-between">
                         <div>
-                            <h2 class="text-lg font-medium" x-text="selectedFile"></h2>
-                            <div class="flex items-center gap-4 mt-2 text-sm text-slate-400">
-                                <span x-text="getSelectedFileChanges().length + ' changes'"></span>
-                                <span x-text="'Last modified: ' + formatDate(getSelectedFileChanges()[0]?.timestamp)"></span>
+                            <div class="flex items-center gap-3 mb-2">
+                                <h2 class="text-lg font-medium">Conversation Turns</h2>
+                                <span x-show="currentSession && !currentSession.isLatest"
+                                      class="text-xs px-2 py-1 bg-yellow-900/50 text-yellow-400 rounded">
+                                    ⚠️ Historical Session - Revert Disabled
+                                </span>
+                                <span x-show="currentSession && currentSession.isLatest"
+                                      class="text-xs px-2 py-1 bg-green-900/50 text-green-400 rounded">
+                                    ✓ Latest Session
+                                </span>
+                            </div>
+                            <div class="text-sm text-slate-400">
+                                <span x-text="currentSession ? currentSession.turns.length + ' conversation turns with file changes' : ''"></span>
                             </div>
                         </div>
-                        <div class="flex items-center gap-3">
-                            <span class="text-xs text-slate-500">
-                                <span class="font-semibold" x-text="getTotalChangedLines()"></span> lines affected
-                            </span>
-                            <button @click="revertAllFileChanges()" 
-                                    class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors">
-                                Revert All Changes
-                            </button>
-                        </div>
                     </div>
                 </div>
-                
-                <!-- View Mode Tabs -->
-                <div x-show="selectedFile" class="bg-slate-800 border-b border-slate-700 px-6 py-2">
-                    <div class="flex gap-4">
-                        <button @click="viewMode = 'diff'" 
-                                :class="viewMode === 'diff' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400'"
-                                class="pb-2 px-1 font-medium text-sm hover:text-slate-200 transition-colors">
-                            Diff View
-                        </button>
-                        <button @click="viewMode = 'inline'" 
-                                :class="viewMode === 'inline' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400'"
-                                class="pb-2 px-1 font-medium text-sm hover:text-slate-200 transition-colors">
-                            Inline View
-                        </button>
+
+                <!-- Conversation Turns List -->
+                <div x-show="selectedSessionId" class="flex-1 overflow-y-auto p-6">
+                    <div x-show="!currentSession || currentSession.turns.length === 0" class="text-slate-500 text-center py-8">
+                        No file changes in this session
+                    </div>
+
+                    <div class="space-y-4">
+                        <template x-for="(turn, turnIndex) in (currentSession ? currentSession.turns : [])" :key="turn.id">
+                            <div class="bg-slate-800 rounded-lg overflow-hidden">
+                                <!-- Turn Header -->
+                                <div class="px-4 py-3 bg-slate-700 border-b border-slate-600">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-sm font-medium text-slate-300">
+                                                Turn #<span x-text="turnIndex + 1"></span>
+                                            </span>
+                                            <span class="text-xs text-slate-500" x-text="formatDate(turn.timestamp)"></span>
+                                        </div>
+                                        <button @click="revertTurn(turn)"
+                                                x-show="turn.parsedChanges && turn.parsedChanges.length > 0"
+                                                :disabled="!turn.isLatestSession"
+                                                :class="!turn.isLatestSession ? 'opacity-50 cursor-not-allowed bg-slate-600' : 'bg-red-600 hover:bg-red-700'"
+                                                class="px-3 py-1 rounded text-xs font-medium transition-colors">
+                                            Revert Turn
+                                        </button>
+                                    </div>
+
+                                    <!-- User Message (Full, with expand/collapse for very long messages) -->
+                                    <div class="mb-3">
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-blue-400 text-sm font-medium shrink-0">👤 User:</span>
+                                            <div class="flex-1"><div x-show="!expandedMessages[turn.id + '-user'] && trimMessage(turn.userMessage).length > 500" class="text-sm text-slate-200 whitespace-pre-wrap"><span x-text="trimMessage(turn.userMessage).substring(0, 500) + '...'"></span> <button @click="expandedMessages[turn.id + '-user'] = true" class="text-blue-400 hover:text-blue-300 text-xs">[Show more]</button></div><div x-show="expandedMessages[turn.id + '-user'] || trimMessage(turn.userMessage).length <= 500" class="text-sm text-slate-200 whitespace-pre-wrap"><span x-text="trimMessage(turn.userMessage)"></span> <button x-show="trimMessage(turn.userMessage).length > 500" @click="expandedMessages[turn.id + '-user'] = false" class="text-blue-400 hover:text-blue-300 text-xs">[Show less]</button></div></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- AI Message (if available) -->
+                                    <div x-show="turn.assistantMessage && trimMessage(turn.assistantMessage)" class="mt-2">
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-green-400 text-sm font-medium shrink-0">🤖 AI:</span>
+                                            <div class="flex-1"><div x-show="!expandedMessages[turn.id + '-ai'] && turn.assistantMessage && trimMessage(turn.assistantMessage).length > 500" class="text-sm text-slate-300 whitespace-pre-wrap"><span x-text="trimMessage(turn.assistantMessage).substring(0, 500) + '...'"></span> <button @click="expandedMessages[turn.id + '-ai'] = true" class="text-blue-400 hover:text-blue-300 text-xs">[Show more]</button></div><div x-show="expandedMessages[turn.id + '-ai'] || !turn.assistantMessage || trimMessage(turn.assistantMessage).length <= 500" class="text-sm text-slate-300 whitespace-pre-wrap"><span x-text="trimMessage(turn.assistantMessage)"></span> <button x-show="turn.assistantMessage && trimMessage(turn.assistantMessage).length > 500" @click="expandedMessages[turn.id + '-ai'] = false" class="text-blue-400 hover:text-blue-300 text-xs">[Show less]</button></div></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- File Changes in this Turn -->
+                                <div class="p-4 space-y-3">
+                                    <template x-for="change in (turn.parsedChanges || [])" :key="change.id">
+                                        <div class="bg-slate-900 rounded-lg overflow-hidden">
+                                            <!-- File Header -->
+                                            <div @click="toggleDiff(change.id)"
+                                                 class="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-slate-800 transition-colors">
+                                                <div class="flex items-center gap-3">
+                                                    <span class="text-lg">📄</span>
+                                                    <div>
+                                                        <div class="text-sm font-medium" x-text="change.filePath"></div>
+                                                        <span class="text-xs px-2 py-0.5 rounded-full"
+                                                              :class="getChangeTypeClass(change.type)"
+                                                              x-text="change.type"></span>
+                                                    </div>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <button @click.stop="revertChange(change.id)"
+                                                            :disabled="!turn.isLatestSession"
+                                                            :class="!turn.isLatestSession ? 'opacity-50 cursor-not-allowed bg-slate-600' : 'bg-red-600 hover:bg-red-700'"
+                                                            class="px-2 py-1 rounded text-xs font-medium transition-colors">
+                                                        Revert
+                                                    </button>
+                                                    <span class="text-slate-400 text-sm" x-text="expandedDiffs[change.id] ? '▼' : '▶'"></span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Expanded Diff -->
+                                            <div x-show="expandedDiffs[change.id]" class="border-t border-slate-700">
+                                                <div class="p-4 overflow-x-auto" x-html="renderChangeDiff(change)"></div>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <div x-show="!turn.parsedChanges || turn.parsedChanges.length === 0" class="text-slate-500 text-sm text-center py-2">
+                                        No file changes in this turn
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
-                
-                <!-- File Content -->
-                <div x-show="selectedFile" class="flex-1 overflow-y-auto">
-                    <div class="font-mono text-sm" x-html="fileViewContent"></div>
-                </div>
-                
+
                 <!-- Empty State -->
-                <div x-show="!selectedFile" class="flex-1 flex items-center justify-center text-slate-500">
+                <div x-show="!selectedSessionId" class="flex-1 flex items-center justify-center text-slate-500">
                     <div class="text-center">
-                        <p class="text-xl mb-2">No file selected</p>
-                        <p class="text-sm">Select a file from the sidebar to view changes</p>
+                        <p class="text-xl mb-2">No session selected</p>
+                        <p class="text-sm">Select a session from the sidebar to view conversation turns</p>
                     </div>
                 </div>
             </main>
@@ -304,41 +377,39 @@
             return {
                 ws: null,
                 loading: true,
+                refreshing: false,
+                sessions: [],
+                selectedSessionId: null,
+                loadingSessionId: null,
                 changes: [],
-                fileTree: {},
-                expandedFolders: {},
-                selectedFile: null,
+                currentSession: null, // SessionWithTurns
+                expandedDiffs: {}, // Map of changeId -> boolean
+                expandedMessages: {}, // Map of turnId-user/turnId-ai -> boolean for expand/collapse
                 statusMessage: '',
                 statusType: 'success',
-                fileViewContent: '',
-                viewMode: 'diff', // 'diff' or 'inline'
-                
+
                 init() {
                     window.claudeRevertInstance = this;
                     this.connectWebSocket();
-                    
-                    // Watch for view mode changes
-                    this.$watch('viewMode', () => {
-                        if (this.selectedFile) {
-                            this.loadFileContent();
-                        }
-                    });
                 },
                 
                 connectWebSocket() {
                     this.ws = new WebSocket('ws://localhost:3456');
-                    
+
                     this.ws.onopen = () => {
                         console.log('Connected to server');
-                        this.ws.send(JSON.stringify({ type: 'getChanges' }));
+                        this.ws.send(JSON.stringify({ type: 'getSessions' }));
                     };
-                    
+
                     this.ws.onmessage = (event) => {
                         const data = JSON.parse(event.data);
-                        
+
                         switch (data.type) {
-                            case 'changes':
-                                this.handleChanges(data.changes);
+                            case 'sessions':
+                                this.handleSessions(data.sessions);
+                                break;
+                            case 'sessionTurns':
+                                this.handleSessionTurns(data.sessionId, data.session);
                                 break;
                             case 'revertSuccess':
                                 this.handleRevertSuccess(data.changeId);
@@ -348,78 +419,184 @@
                                 break;
                         }
                     };
-                    
+
                     this.ws.onerror = (error) => {
                         console.error('WebSocket error:', error);
                         this.showStatus('Connection error', 'error');
                     };
-                    
+
                     this.ws.onclose = () => {
                         console.log('Disconnected from server');
                         setTimeout(() => this.connectWebSocket(), 3000);
                     };
                 },
                 
-                async handleChanges(changes) {
-                    this.changes = changes;
-                    await this.buildFileTree();
+                handleSessions(sessions) {
+                    this.sessions = sessions;
                     this.loading = false;
-                    
-                    // Auto-expand all folders initially
-                    Object.keys(this.fileTree).forEach(path => {
-                        this.expandedFolders[path] = true;
+                    this.refreshing = false;
+
+                    // Auto-select and load the latest session
+                    if (sessions.length > 0) {
+                        const latestSession = sessions[0];
+                        this.selectSession(latestSession.sessionId);
+                    }
+                },
+
+                refreshSessions() {
+                    this.refreshing = true;
+                    this.currentSession = null;
+                    this.expandedDiffs = {};
+                    this.changes = [];
+
+                    // Request fresh session list from server
+                    this.ws.send(JSON.stringify({ type: 'getSessions' }));
+
+                    this.showStatus('Refreshing sessions...', 'success');
+                },
+
+                selectSession(sessionId) {
+                    if (this.selectedSessionId === sessionId && this.currentSession) {
+                        // Already loaded
+                        return;
+                    }
+
+                    this.selectedSessionId = sessionId;
+                    this.currentSession = null;
+                    this.expandedDiffs = {};
+                    this.expandedMessages = {};
+                    this.loadingSessionId = sessionId;
+
+                    // Request session turns from server
+                    this.ws.send(JSON.stringify({
+                        type: 'getSessionTurns',
+                        sessionId: sessionId
+                    }));
+                },
+
+                handleSessionTurns(sessionId, session) {
+                    this.currentSession = session;
+                    this.loadingSessionId = null;
+
+                    // Collect all changes for revert tracking
+                    this.changes = [];
+                    for (const turn of session.turns) {
+                        if (turn.parsedChanges) {
+                            this.changes.push(...turn.parsedChanges);
+                        }
+                    }
+                },
+
+                toggleDiff(changeId) {
+                    this.expandedDiffs[changeId] = !this.expandedDiffs[changeId];
+                },
+
+                renderChangeDiff(change) {
+                    if (!change.diff) {
+                        if (change.type === 'create') {
+                            return '<div class="text-green-400 p-2">+ File created</div>';
+                        } else if (change.type === 'delete') {
+                            return '<div class="text-red-400 p-2">- File deleted</div>';
+                        }
+                        return '<div class="text-slate-400 p-2">No diff available</div>';
+                    }
+
+                    const lines = change.diff.split('\n');
+                    let html = '<div class="font-mono text-sm">';
+                    let inHunk = false;
+                    let lineNumber = { old: 0, new: 0 };
+
+                    lines.forEach((line) => {
+                        if (line.startsWith('@@')) {
+                            const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+                            if (match) {
+                                lineNumber.old = parseInt(match[1]) - 1;
+                                lineNumber.new = parseInt(match[2]) - 1;
+                                inHunk = true;
+                            }
+                            html += `<div class="text-blue-400 text-xs mt-2 mb-1 opacity-70">${this.escapeHtml(line)}</div>`;
+                        } else if (line.startsWith('+++') || line.startsWith('---')) {
+                            // Skip file headers
+                        } else if (inHunk) {
+                            if (line.startsWith('+')) {
+                                lineNumber.new++;
+                                const content = line.substring(1);
+                                html += `
+                                    <div class="flex bg-green-900/20 border-l-2 border-green-500">
+                                        <div class="w-12 text-right pr-2 text-slate-600 select-none">&nbsp;</div>
+                                        <div class="w-12 text-right pr-2 text-slate-500 select-none">${lineNumber.new}</div>
+                                        <div class="pl-2 text-green-400">+</div>
+                                        <div class="pl-2 flex-1 text-green-300">${this.escapeHtml(content)}</div>
+                                    </div>`;
+                            } else if (line.startsWith('-')) {
+                                lineNumber.old++;
+                                const content = line.substring(1);
+                                html += `
+                                    <div class="flex bg-red-900/20 border-l-2 border-red-500">
+                                        <div class="w-12 text-right pr-2 text-slate-500 select-none">${lineNumber.old}</div>
+                                        <div class="w-12 text-right pr-2 text-slate-600 select-none">&nbsp;</div>
+                                        <div class="pl-2 text-red-400">-</div>
+                                        <div class="pl-2 flex-1 text-red-300">${this.escapeHtml(content)}</div>
+                                    </div>`;
+                            } else {
+                                lineNumber.old++;
+                                lineNumber.new++;
+                                html += `
+                                    <div class="flex text-slate-400">
+                                        <div class="w-12 text-right pr-2 text-slate-600 select-none">${lineNumber.old}</div>
+                                        <div class="w-12 text-right pr-2 text-slate-600 select-none">${lineNumber.new}</div>
+                                        <div class="pl-2">&nbsp;</div>
+                                        <div class="pl-2 flex-1">${this.escapeHtml(line)}</div>
+                                    </div>`;
+                            }
+                        }
+                    });
+
+                    html += '</div>';
+                    return html;
+                },
+
+                revertTurn(turn) {
+                    if (!turn.isLatestSession) {
+                        this.showStatus('Cannot revert historical session changes', 'error');
+                        return;
+                    }
+
+                    if (!turn.parsedChanges || turn.parsedChanges.length === 0) {
+                        this.showStatus('No changes to revert in this turn', 'error');
+                        return;
+                    }
+
+                    const message = `This will revert all ${turn.parsedChanges.length} file changes in this turn.\n\nAre you sure?`;
+                    if (!confirm(message)) {
+                        return;
+                    }
+
+                    // Revert all changes in this turn (in reverse order)
+                    const changesReversed = [...turn.parsedChanges].reverse();
+                    changesReversed.forEach(change => {
+                        this.ws.send(JSON.stringify({
+                            type: 'revert',
+                            changeId: change.id
+                        }));
                     });
                 },
-                
-                async buildFileTree() {
-                    this.fileTree = {};
-                    
-                    for (const change of this.changes) {
-                        const parts = change.filePath.split('/');
-                        const filename = parts.pop();
-                        const folderPath = parts.join('/') || '/';
-                        
-                        if (!this.fileTree[folderPath]) {
-                            this.fileTree[folderPath] = { files: {} };
-                        }
-                        
-                        if (!this.fileTree[folderPath].files[filename]) {
-                            this.fileTree[folderPath].files[filename] = [];
-                        }
-                        
-                        // Check if file exists
-                        change.fileExists = await this.checkFileExists(change.filePath);
-                        
-                        this.fileTree[folderPath].files[filename].push(change);
+
+                formatSessionTime(timestamp) {
+                    const date = new Date(timestamp);
+                    const now = new Date();
+                    const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+
+                    if (diffDays === 0) {
+                        return 'Today ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    } else if (diffDays === 1) {
+                        return 'Yesterday ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    } else {
+                        return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                               date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     }
                 },
-                
-                async checkFileExists(filePath) {
-                    try {
-                        const response = await fetch(`/api/file-exists?path=${encodeURIComponent(filePath)}`);
-                        const data = await response.json();
-                        return data.exists;
-                    } catch (error) {
-                        console.warn('Error checking file existence:', error);
-                        return true; // Assume exists if we can't check
-                    }
-                },
-                
-                toggleFolder(path) {
-                    this.expandedFolders[path] = !this.expandedFolders[path];
-                },
-                
-                async selectFile(filePath) {
-                    this.selectedFile = filePath;
-                    await this.loadFileContent();
-                },
-                
-                getSelectedFileChanges() {
-                    if (!this.selectedFile) return [];
-                    return this.changes.filter(c => c.filePath === this.selectedFile)
-                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                },
-                
+
                 getChangeTypeClass(type) {
                     const classes = {
                         'create': 'bg-green-900/50 text-green-400',
@@ -451,20 +628,35 @@
                 },
                 
                 renderSingleChange(change, index) {
+                    const isHistorical = !change.isLatestSession;
+                    const revertDisabled = isHistorical ? 'disabled' : '';
+                    const revertClass = isHistorical
+                        ? 'opacity-50 cursor-not-allowed bg-slate-600'
+                        : 'bg-red-600 hover:bg-red-700';
+
                     let html = `
                         <div class="bg-slate-800 rounded-lg overflow-hidden">
                             <div class="px-4 py-3 bg-slate-700 flex items-center justify-between">
-                                <div>
-                                    <span class="text-sm font-medium text-slate-200">
-                                        <span class="mr-1">${this.getChangeIcon(change.type)}</span>
-                                        Change #${index + 1}: ${this.formatChangeType(change.type)}
-                                    </span>
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-sm font-medium text-slate-200">
+                                            <span class="mr-1">${this.getChangeIcon(change.type)}</span>
+                                            Change #${index + 1}: ${this.formatChangeType(change.type)}
+                                        </span>
+                                        ${isHistorical ? '<span class="text-xs px-2 py-0.5 bg-yellow-900/50 text-yellow-400 rounded">Historical</span>' : ''}
+                                    </div>
                                     <span class="text-xs text-slate-400 ml-3">
                                         ${this.formatDate(change.timestamp)}
                                     </span>
+                                    ${change.userMessage ? `
+                                        <div class="mt-2 text-xs text-slate-400">
+                                            <span class="text-slate-500">🗨️ User:</span> ${this.escapeHtml(change.userMessage.substring(0, 150))}${change.userMessage.length > 150 ? '...' : ''}
+                                        </div>
+                                    ` : ''}
                                 </div>
-                                <button onclick="window.claudeRevertInstance.revertChange('${change.id}')" 
-                                        class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition-colors">
+                                <button onclick="window.claudeRevertInstance.revertChange('${change.id}')"
+                                        ${revertDisabled}
+                                        class="px-3 py-1 ${revertClass} rounded text-xs font-medium transition-colors">
                                     Revert This Change
                                 </button>
                             </div>
@@ -511,25 +703,35 @@
                 renderUnifiedDiff() {
                     const changes = this.getSelectedFileChanges();
                     if (changes.length === 0) return '<div class="p-4 text-slate-400">No changes to display</div>';
-                    
+
                     let html = '<div class="p-4">';
-                    
+
                     // Process each change
                     changes.forEach((change, index) => {
+                        const isHistorical = !change.isLatestSession;
+                        const revertDisabled = isHistorical ? 'disabled' : '';
+                        const revertClass = isHistorical
+                            ? 'opacity-50 cursor-not-allowed bg-slate-600'
+                            : 'bg-red-600 hover:bg-red-700';
+
                         // Change header
                         html += `
                             <div class="mb-6 bg-slate-800 rounded-lg overflow-hidden">
                                 <div class="px-4 py-3 bg-slate-700 flex items-center justify-between">
                                     <div>
-                                        <span class="text-sm font-medium text-slate-200">
-                                            ${this.formatChangeType(change.type)}
-                                        </span>
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-sm font-medium text-slate-200">
+                                                ${this.formatChangeType(change.type)}
+                                            </span>
+                                            ${isHistorical ? '<span class="text-xs px-2 py-0.5 bg-yellow-900/50 text-yellow-400 rounded">Historical</span>' : ''}
+                                        </div>
                                         <span class="text-xs text-slate-400 ml-3">
                                             ${this.formatDate(change.timestamp)}
                                         </span>
                                     </div>
-                                    <button onclick="window.claudeRevertInstance.revertChange('${change.id}')" 
-                                            class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition-colors">
+                                    <button onclick="window.claudeRevertInstance.revertChange('${change.id}')"
+                                            ${revertDisabled}
+                                            class="px-3 py-1 ${revertClass} rounded text-xs font-medium transition-colors">
                                         Revert
                                     </button>
                                 </div>
@@ -813,13 +1015,28 @@
                     };
                     return text.replace(/[&<>"']/g, m => map[m]);
                 },
+
+                // Trim leading/trailing whitespace from messages for display
+                // This doesn't modify the original log files
+                trimMessage(text) {
+                    if (!text) return '';
+                    return text.trim();
+                },
                 
                 revertChange(changeId) {
                     console.log('Reverting change:', changeId);
+
+                    // Find the change
+                    const change = this.changes.find(c => c.id === changeId);
+                    if (change && !change.isLatestSession) {
+                        this.showStatus('Cannot revert historical session changes', 'error');
+                        return;
+                    }
+
                     if (!confirm('Are you sure you want to revert this change?')) {
                         return;
                     }
-                    
+
                     this.ws.send(JSON.stringify({
                         type: 'revert',
                         changeId: changeId
@@ -828,12 +1045,19 @@
                 
                 revertAllFileChanges() {
                     const changes = this.getSelectedFileChanges();
+
+                    // Check if any changes are from historical sessions
+                    if (changes.some(c => !c.isLatestSession)) {
+                        this.showStatus('Cannot revert historical session changes', 'error');
+                        return;
+                    }
+
                     const message = `⚠️ Cascading Revert Warning\n\nThis will revert all ${changes.length} changes to this file.\n\nChanges are reverted in reverse chronological order (newest first).\n\nAre you sure you want to continue?`;
-                    
+
                     if (!confirm(message)) {
                         return;
                     }
-                    
+
                     changes.forEach(change => {
                         this.ws.send(JSON.stringify({
                             type: 'revert',
@@ -844,16 +1068,21 @@
                 
                 handleRevertSuccess(changeId) {
                     this.showStatus('Change reverted successfully!', 'success');
-                    
-                    // Remove the reverted change
+
+                    // Remove the reverted change from current session
                     this.changes = this.changes.filter(c => c.id !== changeId);
-                    this.buildFileTree();
-                    
+
+                    // Also remove from sessionChanges
+                    if (this.selectedSessionId && this.sessionChanges[this.selectedSessionId]) {
+                        this.sessionChanges[this.selectedSessionId] =
+                            this.sessionChanges[this.selectedSessionId].filter(c => c.id !== changeId);
+                    }
+
                     // Refresh the file view to show the reverted content
                     if (this.selectedFile) {
                         this.refreshFileView();
                     }
-                    
+
                     // If no more changes for selected file, clear selection
                     if (this.selectedFile && this.getSelectedFileChanges().length === 0) {
                         this.selectedFile = null;
